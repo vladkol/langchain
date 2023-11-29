@@ -116,7 +116,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             )
             end_of_batch = False
             if (
-                batch_token_len + current_text_token_cnt >= _MAX_TOKENS_PER_BATCH
+                batch_token_len + current_text_token_cnt > _MAX_TOKENS_PER_BATCH
                 or len(current_batch) == batch_size
             ):
                 end_of_batch = True
