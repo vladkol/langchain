@@ -11,7 +11,6 @@ from langchain.llms.base import create_base_retry_decorator
 from langchain.llms.vertexai import _VertexAICommon
 from langchain.utilities.vertexai import raise_vertex_import_error
 
-
 _MAX_TOKENS_PER_BATCH = 20000
 _MAX_BATCH_SIZE = 250
 _MIN_BATCH_SIZE = 5
