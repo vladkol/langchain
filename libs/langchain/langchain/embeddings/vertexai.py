@@ -1,16 +1,40 @@
-from typing import Dict, List
+import re
+import string
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.pydantic_v1 import root_validator
 
+from langchain.llms.base import create_base_retry_decorator
 from langchain.llms.vertexai import _VertexAICommon
 from langchain.utilities.vertexai import raise_vertex_import_error
+
+
+_MAX_TOKENS_PER_BATCH = 20000
+_MAX_BATCH_SIZE = 250
+_MIN_BATCH_SIZE = 5
 
 
 class VertexAIEmbeddings(_VertexAICommon, Embeddings):
     """Google Cloud VertexAI embedding models."""
 
-    model_name: str = "textembedding-gecko"
+    model_name: str = "textembedding-gecko@latest"
+
+    # https://cloud.google.com/vertex-ai/docs/generative-ai/embeddings/get-text-embeddings#api_changes_to_models_released_on_or_after_august_2023
+    embeddings_type: Optional[
+        Literal[
+            "RETRIEVAL_QUERY",
+            "RETRIEVAL_DOCUMENT",
+            "SEMANTIC_SIMILARITY",
+            "CLASSIFICATION",
+            "CLUSTERING",
+        ]
+    ] = None
+
+    # protected instance context
+    _instance: Dict[str, Any] = {}  #: :meta private:
 
     @root_validator()
     def validate_environment(cls, values: Dict) -> Dict:
@@ -18,29 +42,231 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         cls._try_init_vertexai(values)
         try:
             from vertexai.language_models import TextEmbeddingModel
+
+            values["client"] = TextEmbeddingModel.from_pretrained(values["model_name"])
         except ImportError:
             raise_vertex_import_error()
-        values["client"] = TextEmbeddingModel.from_pretrained(values["model_name"])
         return values
 
+    def __init__(
+        self,
+        project: Optional[str] = None,
+        location: str = "us-central1",
+        request_parallelism: int = 5,
+        max_retries: int = 6,
+        model_name: str = "textembedding-gecko@latest",
+        credentials: Optional[Any] = None,
+        embeddings_type: Optional[
+            Literal[
+                "RETRIEVAL_QUERY",
+                "RETRIEVAL_DOCUMENT",
+                "SEMANTIC_SIMILARITY",
+                "CLASSIFICATION",
+                "CLUSTERING",
+            ]
+        ] = None,
+        **kwargs: Any,
+    ):
+        """Initialize the sentence_transformer."""
+        super().__init__(
+            project=project,
+            location=location,
+            credentials=credentials,
+            request_parallelism=request_parallelism,
+            max_retries=max_retries,
+            **kwargs,
+        )
+        self.model_name = model_name
+        self.embeddings_type = embeddings_type
+
+        self._instance["batch_size"] = _MAX_BATCH_SIZE
+        self._instance["min_good_batch_size"] = _MIN_BATCH_SIZE
+        self._instance["lock"] = threading.Lock()
+        self._instance["batch_size_validated"] = False
+        self._instance["task_executor"] = ThreadPoolExecutor(
+            max_workers=request_parallelism
+        )
+
+    @staticmethod
+    def _split_by_punctuation(text: str) -> List[str]:
+        """Splits a string by punctuation and whitespace characters."""
+        split_by = string.punctuation + "\t\n "
+        pattern = f"([{split_by}])"
+        # Using re.split to split the text based on the pattern
+        return [segment for segment in re.split(pattern, text) if segment]
+
+    def _prepare_batches(
+        self, texts: List[str], batch_size: int = 0
+    ) -> List[List[str]]:
+        """Splits texts in batches based on current maximum batch size
+        and maximum tokens per request.
+        """
+        if batch_size == 0:
+            batch_size = self._instance["batch_size"]
+        text_index = 0
+        texts_len = len(texts)
+        batch_token_len = 0
+        batches = []
+        current_batch = []
+        if texts_len == 0:
+            return []
+        while text_index < texts_len:
+            current_text = texts[text_index]
+            current_text_token_cnt = (
+                len(VertexAIEmbeddings._split_by_punctuation(current_text)) * 2
+            )
+            end_of_batch = False
+            if (
+                batch_token_len + current_text_token_cnt >= _MAX_TOKENS_PER_BATCH
+                or len(current_batch) == batch_size
+            ):
+                end_of_batch = True
+            else:
+                if text_index == texts_len - 1:
+                    end_of_batch = True
+                batch_token_len += current_text_token_cnt
+                current_batch.append(current_text)
+                text_index += 1
+            if end_of_batch:
+                batches.append(current_batch)
+                current_batch = []
+                batch_token_len = 0
+        return batches
+
+    def _get_embeddings_with_retry(self, texts: List[str]) -> List[List[float]]:
+        """Makes a Vertex AI model request with retry logic."""
+        from google.api_core.exceptions import (
+            Aborted,
+            DeadlineExceeded,
+            ResourceExhausted,
+            ServiceUnavailable,
+        )
+
+        errors = [
+            ResourceExhausted,
+            ServiceUnavailable,
+            Aborted,
+            DeadlineExceeded,
+        ]
+        retry_decorator = create_base_retry_decorator(
+            error_types=errors, max_retries=self.max_retries
+        )
+
+        @retry_decorator
+        def _completion_with_retry(texts_to_process) -> Any:
+            if self.embeddings_type:
+                from vertexai.preview.language_models import TextEmbeddingInput
+
+                requests = [
+                    TextEmbeddingInput(text=t, task_type=self.embeddings_type)
+                    for t in texts
+                ]
+            else:
+                requests = texts_to_process
+            embeddings = self.client.get_embeddings(requests)
+            return [embs.values for embs in embeddings]
+
+        return _completion_with_retry(texts)
+
+    def _prepare_and_validate_batches(
+        self, texts: List[str]
+    ) -> Tuple[List[List[float]], List[List[str]]]:
+        """Prepares text batches with one-time validation of batch size.
+        Batch size varies between GCP regions and individual project quotas.
+        # Returns embeddings of the first text batch that went through,
+        # and text batches for the rest of the texts.
+        """
+        from google.api_core.exceptions import InvalidArgument
+
+        batches = self._prepare_batches(texts)
+        # If batch size if less or equal to one that went through before,
+        # then keep batches as they are.
+        if len(batches[0]) <= self._instance["min_good_batch_size"]:
+            return [], batches
+        with self._instance["lock"]:
+            # If largest possible batch size was validated
+            # while waiting for the lock, then check for rebuilding
+            # our batches, and return.
+            if self._instance["batch_size_validated"]:
+                if len(batches[0]) <= self._instance["batch_size"]:
+                    return [], batches
+                else:
+                    return [], self._prepare_batches(texts)
+            # Figure out largest possible batch size by trying to push
+            # batches and lowering their size in half after every failure.
+            first_batch = batches[0]
+            first_result = []
+            had_failure = False
+            while True:
+                try:
+                    first_result = self._get_embeddings_with_retry(first_batch)
+                    break
+                except InvalidArgument:
+                    had_failure = True
+                    first_batch_len = len(first_batch)
+                    if first_batch_len == _MIN_BATCH_SIZE:
+                        raise
+                    first_batch_len = max(_MIN_BATCH_SIZE, int(first_batch_len / 2))
+                    first_batch = first_batch[:first_batch_len]
+            first_batch_len = len(first_batch)
+            self._instance["min_good_batch_size"] = max(
+                self._instance["min_good_batch_size"], first_batch_len
+            )
+            # If had a failure and recovered
+            # or went through with the max size, then it's a legit batch size.
+            if had_failure or first_batch_len == _MAX_BATCH_SIZE:
+                self._instance["batch_size"] = first_batch_len
+                self._instance["batch_size_validated"] = True
+                # If batch size was updated,
+                # rebuild batches with the new batch size
+                # (texts that went through are excluded here).
+                if first_batch_len != _MAX_BATCH_SIZE:
+                    batches = self._prepare_batches(texts[first_batch_len:])
+            else:
+                # Still figuring out max batch size.
+                batches = batches[1:]
+        # Returning embeddings of the first text batch that went through,
+        # and text batches for the rest of texts.
+        return first_result, batches
+
     def embed_documents(
-        self, texts: List[str], batch_size: int = 5
+        self, texts: List[str], batch_size: int = 0
     ) -> List[List[float]]:
-        """Embed a list of strings. Vertex AI currently
-        sets a max batch size of 5 strings.
+        """Embed a list of strings.
 
         Args:
             texts: List[str] The list of strings to embed.
-            batch_size: [int] The batch size of embeddings to send to the model
+            batch_size: [int] The batch size of embeddings to send to the model.
+                If zero, then the largest batch size will be detected dynamically
+                at the first request, starting from 250, down to 5.
 
         Returns:
             List of embeddings, one for each text.
         """
+        if len(texts) == 0:
+            return []
         embeddings = []
-        for batch in range(0, len(texts), batch_size):
-            text_batch = texts[batch : batch + batch_size]
-            embeddings_batch = self.client.get_embeddings(text_batch)
-            embeddings.extend([el.values for el in embeddings_batch])
+        if batch_size == 0:
+            # Fixed batch size.
+            batches = self._prepare_batches(texts, batch_size)
+            first_batch_result = []
+        else:
+            # Dynamic batch size, starting from 250 at the first call.
+            first_batch_result, batches = self._prepare_and_validate_batches(texts)
+        # First batch result may have some embeddings already.
+        # In such case, batches have texts that were not processed yet.
+        embeddings.extend(first_batch_result)
+        tasks = []
+        for batch in batches:
+            tasks.append(
+                self._instance["task_executor"].submit(
+                    self._get_embeddings_with_retry, texts=batch
+                )
+            )
+        if len(tasks) > 0:
+            wait(tasks)
+        for t in tasks:
+            embeddings.extend(t.result())
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
@@ -52,5 +278,5 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         Returns:
             Embedding for the text.
         """
-        embeddings = self.client.get_embeddings([text])
-        return embeddings[0].values
+        embeddings = self.embed_documents([text], 1)
+        return embeddings[0]
