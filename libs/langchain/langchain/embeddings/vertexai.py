@@ -105,8 +105,8 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         text_index = 0
         texts_len = len(texts)
         batch_token_len = 0
-        batches = []
-        current_batch = []
+        batches: List[List[str]] = []
+        current_batch: List[str] = []
         if texts_len == 0:
             return []
         while text_index < texts_len:
@@ -152,7 +152,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         )
 
         @retry_decorator
-        def _completion_with_retry(texts_to_process) -> Any:
+        def _completion_with_retry(texts_to_process: List[str]) -> Any:
             if self.embeddings_type:
                 from vertexai.language_models import TextEmbeddingInput
 
@@ -244,11 +244,11 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         """
         if len(texts) == 0:
             return []
-        embeddings = []
+        embeddings: List[List[float]] = []
+        first_batch_result: List[List[float]] = []
         if batch_size > 0:
             # Fixed batch size.
             batches = self._prepare_batches(texts, batch_size)
-            first_batch_result = []
         else:
             # Dynamic batch size, starting from 250 at the first call.
             first_batch_result, batches = self._prepare_and_validate_batches(texts)
