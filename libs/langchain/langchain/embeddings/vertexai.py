@@ -19,7 +19,7 @@ _MIN_BATCH_SIZE = 5
 class VertexAIEmbeddings(_VertexAICommon, Embeddings):
     """Google Cloud VertexAI embedding models."""
 
-    model_name: str = "textembedding-gecko@latest"
+    model_name: str = "textembedding-gecko"
 
     # https://cloud.google.com/vertex-ai/docs/generative-ai/embeddings/get-text-embeddings#api_changes_to_models_released_on_or_after_august_2023
     embeddings_type: Optional[
@@ -32,8 +32,8 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         ]
     ] = None
 
-    # protected instance context
-    _instance: Dict[str, Any] = {}  #: :meta private:
+    # instance context
+    instance: Dict[str, Any] = {}  #: :meta private:
 
     @root_validator()
     def validate_environment(cls, values: Dict) -> Dict:
@@ -53,7 +53,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         location: str = "us-central1",
         request_parallelism: int = 5,
         max_retries: int = 6,
-        model_name: str = "textembedding-gecko@latest",
+        model_name: str = "textembedding-gecko",
         credentials: Optional[Any] = None,
         embeddings_type: Optional[
             Literal[
@@ -78,11 +78,11 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         self.model_name = model_name
         self.embeddings_type = embeddings_type
 
-        self._instance["batch_size"] = _MAX_BATCH_SIZE
-        self._instance["min_good_batch_size"] = _MIN_BATCH_SIZE
-        self._instance["lock"] = threading.Lock()
-        self._instance["batch_size_validated"] = False
-        self._instance["task_executor"] = ThreadPoolExecutor(
+        self.instance["batch_size"] = _MAX_BATCH_SIZE
+        self.instance["min_good_batch_size"] = _MIN_BATCH_SIZE
+        self.instance["lock"] = threading.Lock()
+        self.instance["batch_size_validated"] = False
+        self.instance["task_executor"] = ThreadPoolExecutor(
             max_workers=request_parallelism
         )
 
@@ -101,7 +101,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         and maximum tokens per request.
         """
         if batch_size == 0:
-            batch_size = self._instance["batch_size"]
+            batch_size = self.instance["batch_size"]
         text_index = 0
         texts_len = len(texts)
         batch_token_len = 0
@@ -154,7 +154,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         @retry_decorator
         def _completion_with_retry(texts_to_process) -> Any:
             if self.embeddings_type:
-                from vertexai.preview.language_models import TextEmbeddingInput
+                from vertexai.language_models import TextEmbeddingInput
 
                 requests = [
                     TextEmbeddingInput(text=t, task_type=self.embeddings_type)
@@ -180,14 +180,14 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         batches = self._prepare_batches(texts)
         # If batch size if less or equal to one that went through before,
         # then keep batches as they are.
-        if len(batches[0]) <= self._instance["min_good_batch_size"]:
+        if len(batches[0]) <= self.instance["min_good_batch_size"]:
             return [], batches
-        with self._instance["lock"]:
+        with self.instance["lock"]:
             # If largest possible batch size was validated
             # while waiting for the lock, then check for rebuilding
             # our batches, and return.
-            if self._instance["batch_size_validated"]:
-                if len(batches[0]) <= self._instance["batch_size"]:
+            if self.instance["batch_size_validated"]:
+                if len(batches[0]) <= self.instance["batch_size"]:
                     return [], batches
                 else:
                     return [], self._prepare_batches(texts)
@@ -208,14 +208,14 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
                     first_batch_len = max(_MIN_BATCH_SIZE, int(first_batch_len / 2))
                     first_batch = first_batch[:first_batch_len]
             first_batch_len = len(first_batch)
-            self._instance["min_good_batch_size"] = max(
-                self._instance["min_good_batch_size"], first_batch_len
+            self.instance["min_good_batch_size"] = max(
+                self.instance["min_good_batch_size"], first_batch_len
             )
             # If had a failure and recovered
             # or went through with the max size, then it's a legit batch size.
             if had_failure or first_batch_len == _MAX_BATCH_SIZE:
-                self._instance["batch_size"] = first_batch_len
-                self._instance["batch_size_validated"] = True
+                self.instance["batch_size"] = first_batch_len
+                self.instance["batch_size_validated"] = True
                 # If batch size was updated,
                 # rebuild batches with the new batch size
                 # (texts that went through are excluded here).
@@ -245,7 +245,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         if len(texts) == 0:
             return []
         embeddings = []
-        if batch_size == 0:
+        if batch_size > 0:
             # Fixed batch size.
             batches = self._prepare_batches(texts, batch_size)
             first_batch_result = []
@@ -258,7 +258,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         tasks = []
         for batch in batches:
             tasks.append(
-                self._instance["task_executor"].submit(
+                self.instance["task_executor"].submit(
                     self._get_embeddings_with_retry, texts=batch
                 )
             )
