@@ -81,10 +81,10 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         self.model_name = model_name
         self.embeddings_type = embeddings_type
 
-        self.instance["batch_size"] = kwargs.get("batch_size", _MAX_BATCH_SIZE)
-        self.instance["min_good_batch_size"] = kwargs.get(
-            "min_good_batch_size", _MIN_BATCH_SIZE
-        )
+        self.instance["max_batch_size"] = kwargs.get("max_batch_size", _MAX_BATCH_SIZE)
+        self.instance["batch_size"] = self.instance["max_batch_size"]
+        self.instance["min_batch_size"] = kwargs.get("min_batch_size", _MIN_BATCH_SIZE)
+        self.instance["min_good_batch_size"] = self.instance["min_batch_size"]
         self.instance["lock"] = threading.Lock()
         self.instance["batch_size_validated"] = False
         self.instance["task_executor"] = ThreadPoolExecutor(
@@ -226,9 +226,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
                 except InvalidArgument:
                     had_failure = True
                     first_batch_len = len(first_batch)
-                    if first_batch_len == _MIN_BATCH_SIZE:
+                    if first_batch_len == self.instance["min_batch_size"]:
                         raise
-                    first_batch_len = max(_MIN_BATCH_SIZE, int(first_batch_len / 2))
+                    first_batch_len = max(self.instance["min_batch_size"], int(first_batch_len / 2))
                     first_batch = first_batch[:first_batch_len]
             first_batch_len = len(first_batch)
             self.instance["min_good_batch_size"] = max(
@@ -236,13 +236,13 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             )
             # If had a failure and recovered
             # or went through with the max size, then it's a legit batch size.
-            if had_failure or first_batch_len == _MAX_BATCH_SIZE:
+            if had_failure or first_batch_len == self.instance["max_batch_size"]:
                 self.instance["batch_size"] = first_batch_len
                 self.instance["batch_size_validated"] = True
                 # If batch size was updated,
                 # rebuild batches with the new batch size
                 # (texts that went through are excluded here).
-                if first_batch_len != _MAX_BATCH_SIZE:
+                if first_batch_len != self.instance["max_batch_size"]:
                     batches = VertexAIEmbeddings._prepare_batches(
                         texts[first_batch_len:], self.instance["batch_size"]
                     )
