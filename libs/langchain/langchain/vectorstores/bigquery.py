@@ -576,24 +576,9 @@ class BigQueryVectorStore(VectorStore):
         **kwargs: Any,
     ) -> "BigQueryVectorStore":
         """Return VectorStore initialized from texts and embeddings."""
-        project_id = kwargs.get("project_id", None)
-        if not project_id:
-            raise ValueError("project_id argument is missing")
-        location = kwargs.get("location", None)
-        if not location:
-            raise ValueError("location argument is missing")
-        dataset_name = kwargs.get("dataset_name", None)
-        if not dataset_name:
-            raise ValueError("dataset_name argument is missing")
-        table_name = kwargs.get("table_name", BigQueryVectorStore.DEFAULT_TABLE_NAME)
-        credentials = kwargs.get("credentials", None)
         vs_obj = BigQueryVectorStore(
-            project_id=project_id,
-            location=location,
-            dataset_name=dataset_name,
-            table_name=table_name,
-            credentials=credentials,
             embedding=embedding,
+            **kwargs
         )
         vs_obj.add_texts(texts, metadatas)
         return vs_obj
