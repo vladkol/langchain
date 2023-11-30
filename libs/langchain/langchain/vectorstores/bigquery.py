@@ -1,3 +1,6 @@
+"""Vector and document table in Google Cloud BigQuery."""
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -576,9 +579,6 @@ class BigQueryVectorStore(VectorStore):
         **kwargs: Any,
     ) -> "BigQueryVectorStore":
         """Return VectorStore initialized from texts and embeddings."""
-        vs_obj = BigQueryVectorStore(
-            embedding=embedding,
-            **kwargs
-        )
+        vs_obj = BigQueryVectorStore(embedding=embedding, **kwargs)
         vs_obj.add_texts(texts, metadatas)
         return vs_obj
