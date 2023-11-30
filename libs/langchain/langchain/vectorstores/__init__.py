@@ -110,6 +110,12 @@ def _import_astradb() -> Any:
     return AstraDB
 
 
+def _import_bigquery() -> Any:
+    from langchain.vectorstores.bigquery import BigQueryVectorStore
+
+    return BigQueryVectorStore
+
+
 def _import_chroma() -> Any:
     from langchain.vectorstores.chroma import Chroma
 
@@ -457,6 +463,8 @@ def __getattr__(name: str) -> Any:
         return _import_cassandra()
     elif name == "AstraDB":
         return _import_astradb()
+    elif name == "BigQueryVectorStore":
+        return _import_bigquery()
     elif name == "Chroma":
         return _import_chroma()
     elif name == "Clarifai":

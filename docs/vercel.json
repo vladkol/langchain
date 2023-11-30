@@ -2745,6 +2745,14 @@
       "destination": "/docs/integrations/vectorstores/matchingengine"
     },
     {
+      "source": "/en/latest/modules/indexes/vectorstores/examples/bigquery.html",
+      "destination": "/docs/integrations/vectorstores/bigquery"
+    },
+    {
+      "source": "/en/latest/modules/indexes/vectorstores/examples/bigquery",
+      "destination": "/docs/integrations/vectorstores/bigquery"
+    },
+    {
       "source": "/en/latest/modules/indexes/vectorstores/examples/milvus.html",
       "destination": "/docs/integrations/vectorstores/milvus"
     },
@@ -3915,7 +3923,8 @@
     {
       "source": "/docs/use_cases/self_check(/?)",
       "destination": "/docs/use_cases/more/self_check/"
-    }, {
+    },
+    {
       "source": "/docs/modules/chains/additional/elasticsearch_database",
       "destination": "/docs/use_cases/qa_structured/integrations/elasticsearch"
     },
