@@ -97,14 +97,11 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         # Using re.split to split the text based on the pattern
         return [segment for segment in re.split(pattern, text) if segment]
 
-    def _prepare_batches(
-        self, texts: List[str], batch_size: int = 0
-    ) -> List[List[str]]:
+    @staticmethod
+    def _prepare_batches(texts: List[str], batch_size: int) -> List[List[str]]:
         """Splits texts in batches based on current maximum batch size
         and maximum tokens per request.
         """
-        if batch_size == 0:
-            batch_size = self.instance["batch_size"]
         text_index = 0
         texts_len = len(texts)
         batch_token_len = 0
@@ -127,7 +124,10 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
                 # Current text is too big even for a single batch.
                 # Such request will fail, but we still make a batch
                 # so that the app can get the error from the API.
-                current_batch.append(current_text)
+                if len(current_batch) > 0:
+                    # Adding current batch if not empty.
+                    batches.append(current_batch)
+                current_batch = [current_text]
                 text_index += 1
                 end_of_batch = True
             elif (
@@ -194,7 +194,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         """
         from google.api_core.exceptions import InvalidArgument
 
-        batches = self._prepare_batches(texts)
+        batches = VertexAIEmbeddings._prepare_batches(
+            texts, self.instance["batch_size"]
+        )
         # If batch size if less or equal to one that went through before,
         # then keep batches as they are.
         if len(batches[0]) <= self.instance["min_good_batch_size"]:
@@ -207,7 +209,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
                 if len(batches[0]) <= self.instance["batch_size"]:
                     return [], batches
                 else:
-                    return [], self._prepare_batches(texts)
+                    return [], VertexAIEmbeddings._prepare_batches(
+                        texts, self.instance["batch_size"]
+                    )
             # Figure out largest possible batch size by trying to push
             # batches and lowering their size in half after every failure.
             first_batch = batches[0]
@@ -237,7 +241,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
                 # rebuild batches with the new batch size
                 # (texts that went through are excluded here).
                 if first_batch_len != _MAX_BATCH_SIZE:
-                    batches = self._prepare_batches(texts[first_batch_len:])
+                    batches = VertexAIEmbeddings._prepare_batches(
+                        texts[first_batch_len:], self.instance["batch_size"]
+                    )
             else:
                 # Still figuring out max batch size.
                 batches = batches[1:]
@@ -265,7 +271,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         first_batch_result: List[List[float]] = []
         if batch_size > 0:
             # Fixed batch size.
-            batches = self._prepare_batches(texts, batch_size)
+            batches = VertexAIEmbeddings._prepare_batches(texts, batch_size)
         else:
             # Dynamic batch size, starting from 250 at the first call.
             first_batch_result, batches = self._prepare_and_validate_batches(texts)
