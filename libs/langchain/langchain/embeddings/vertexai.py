@@ -228,7 +228,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
                     first_batch_len = len(first_batch)
                     if first_batch_len == self.instance["min_batch_size"]:
                         raise
-                    first_batch_len = max(self.instance["min_batch_size"], int(first_batch_len / 2))
+                    first_batch_len = max(
+                        self.instance["min_batch_size"], int(first_batch_len / 2)
+                    )
                     first_batch = first_batch[:first_batch_len]
             first_batch_len = len(first_batch)
             self.instance["min_good_batch_size"] = max(
