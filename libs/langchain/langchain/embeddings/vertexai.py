@@ -1,3 +1,4 @@
+import logging
 import re
 import string
 import threading
@@ -10,6 +11,8 @@ from langchain_core.pydantic_v1 import root_validator
 from langchain.llms.base import create_base_retry_decorator
 from langchain.llms.vertexai import _VertexAICommon
 from langchain.utilities.vertexai import raise_vertex_import_error
+
+logger = logging.getLogger(__name__)
 
 _MAX_TOKENS_PER_BATCH = 20000
 _MAX_BATCH_SIZE = 250
@@ -111,17 +114,31 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             return []
         while text_index < texts_len:
             current_text = texts[text_index]
+            # Number of tokens per a text is conservatively estimated
+            # as 2 times number of words, punctuation and whitespace characters.
+            # Using `count_tokens` API will make batching too expensive.
+            # Utilizing a tokenizer, would add a dependency that would not
+            # necessarily be reused by the application using this class.
             current_text_token_cnt = (
                 len(VertexAIEmbeddings._split_by_punctuation(current_text)) * 2
             )
             end_of_batch = False
-            if (
+            if current_text_token_cnt > _MAX_TOKENS_PER_BATCH:
+                # Current text is too big even for a single batch.
+                # Such request will fail, but we still make a batch
+                # so that the app can get the error from the API.
+                current_batch.append(current_text)
+                text_index += 1
+                end_of_batch = True
+            elif (
                 batch_token_len + current_text_token_cnt > _MAX_TOKENS_PER_BATCH
                 or len(current_batch) == batch_size
             ):
                 end_of_batch = True
             else:
                 if text_index == texts_len - 1:
+                    # Last element - even though the batch may be not big,
+                    # we still need to make it.
                     end_of_batch = True
                 batch_token_len += current_text_token_cnt
                 current_batch.append(current_text)
