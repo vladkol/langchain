@@ -81,8 +81,10 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         self.model_name = model_name
         self.embeddings_type = embeddings_type
 
-        self.instance["batch_size"] = _MAX_BATCH_SIZE
-        self.instance["min_good_batch_size"] = _MIN_BATCH_SIZE
+        self.instance["batch_size"] = kwargs.get("batch_size", _MAX_BATCH_SIZE)
+        self.instance["min_good_batch_size"] = kwargs.get(
+            "min_good_batch_size", _MIN_BATCH_SIZE
+        )
         self.instance["lock"] = threading.Lock()
         self.instance["batch_size_validated"] = False
         self.instance["task_executor"] = ThreadPoolExecutor(
