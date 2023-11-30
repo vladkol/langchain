@@ -158,7 +158,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
 
                 requests = [
                     TextEmbeddingInput(text=t, task_type=self.embeddings_type)
-                    for t in texts
+                    for t in texts_to_process
                 ]
             else:
                 requests = texts_to_process
