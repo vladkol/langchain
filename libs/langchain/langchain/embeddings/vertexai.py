@@ -259,12 +259,16 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             batch_size: [int] The batch size of embeddings to send to the model.
                 If zero, then the largest batch size will be detected dynamically
                 at the first request, starting from 250, down to 5.
-            embeddings_task_type: [str] optional embeddings task type, one of the following
-                            RETRIEVAL_QUERY	- Text is a query in a search/retrieval setting.
-                            RETRIEVAL_DOCUMENT - Text is a document in a search/retrieval setting.
-                            SEMANTIC_SIMILARITY - Embeddings will be used for Semantic Textual Similarity (STS).
-                            CLASSIFICATION - Embeddings will be used for classification.
-                            CLUSTERING - Embeddings will be used for clustering.
+            embeddings_task_type: [str] optional embeddings task type,
+                one of the following
+                    RETRIEVAL_QUERY	- Text is a query
+                                      in a search/retrieval setting.
+                    RETRIEVAL_DOCUMENT - Text is a document
+                                         in a search/retrieval setting.
+                    SEMANTIC_SIMILARITY - Embeddings will be used
+                                          for Semantic Textual Similarity (STS).
+                    CLASSIFICATION - Embeddings will be used for classification.
+                    CLUSTERING - Embeddings will be used for clustering.
 
         Returns:
             List of embeddings, one for each text.
