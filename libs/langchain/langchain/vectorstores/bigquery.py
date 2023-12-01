@@ -75,7 +75,7 @@ class BigQueryVectorStore(VectorStore):
         except ModuleNotFoundError:
             raise ImportError(
                 "Please, install or upgrade the google-cloud-bigquery library: "
-                "pip install google-cloud-aiplatform"
+                "pip install google-cloud-bigquery"
             )
         self._embedding_function = embedding
         if not self._embedding_function:
