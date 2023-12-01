@@ -22,20 +22,7 @@ _MIN_BATCH_SIZE = 5
 class VertexAIEmbeddings(_VertexAICommon, Embeddings):
     """Google Cloud VertexAI embedding models."""
 
-    model_name: str = "textembedding-gecko"
-
-    # https://cloud.google.com/vertex-ai/docs/generative-ai/embeddings/get-text-embeddings#api_changes_to_models_released_on_or_after_august_2023
-    embeddings_type: Optional[
-        Literal[
-            "RETRIEVAL_QUERY",
-            "RETRIEVAL_DOCUMENT",
-            "SEMANTIC_SIMILARITY",
-            "CLASSIFICATION",
-            "CLUSTERING",
-        ]
-    ] = None
-
-    # instance context
+    # Instance context
     instance: Dict[str, Any] = {}  #: :meta private:
 
     @root_validator()
@@ -58,15 +45,6 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         max_retries: int = 6,
         model_name: str = "textembedding-gecko",
         credentials: Optional[Any] = None,
-        embeddings_type: Optional[
-            Literal[
-                "RETRIEVAL_QUERY",
-                "RETRIEVAL_DOCUMENT",
-                "SEMANTIC_SIMILARITY",
-                "CLASSIFICATION",
-                "CLUSTERING",
-            ]
-        ] = None,
         **kwargs: Any,
     ):
         """Initialize the sentence_transformer."""
@@ -76,11 +54,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             credentials=credentials,
             request_parallelism=request_parallelism,
             max_retries=max_retries,
+            model_name=model_name,
             **kwargs,
         )
-        self.model_name = model_name
-        self.embeddings_type = embeddings_type
-
         self.instance["max_batch_size"] = kwargs.get("max_batch_size", _MAX_BATCH_SIZE)
         self.instance["batch_size"] = self.instance["max_batch_size"]
         self.instance["min_batch_size"] = kwargs.get("min_batch_size", _MIN_BATCH_SIZE)
@@ -90,6 +66,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         self.instance["task_executor"] = ThreadPoolExecutor(
             max_workers=request_parallelism
         )
+        self.instance[
+            "embeddings_task_type_supported"
+        ] = not self.client._endpoint_name.endswith("/textembedding-gecko@001")
 
     @staticmethod
     def _split_by_punctuation(text: str) -> List[str]:
@@ -151,7 +130,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
                 batch_token_len = 0
         return batches
 
-    def _get_embeddings_with_retry(self, texts: List[str]) -> List[List[float]]:
+    def _get_embeddings_with_retry(
+        self, texts: List[str], embeddings_type: Optional[str] = None
+    ) -> List[List[float]]:
         """Makes a Vertex AI model request with retry logic."""
         from google.api_core.exceptions import (
             Aborted,
@@ -172,11 +153,11 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
 
         @retry_decorator
         def _completion_with_retry(texts_to_process: List[str]) -> Any:
-            if self.embeddings_type:
+            if embeddings_type and self.instance["embeddings_task_type_supported"]:
                 from vertexai.language_models import TextEmbeddingInput
 
                 requests = [
-                    TextEmbeddingInput(text=t, task_type=self.embeddings_type)
+                    TextEmbeddingInput(text=t, task_type=embeddings_type)
                     for t in texts_to_process
                 ]
             else:
@@ -187,7 +168,7 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         return _completion_with_retry(texts)
 
     def _prepare_and_validate_batches(
-        self, texts: List[str]
+        self, texts: List[str], embeddings_type: Optional[str] = None
     ) -> Tuple[List[List[float]], List[List[str]]]:
         """Prepares text batches with one-time validation of batch size.
         Batch size varies between GCP regions and individual project quotas.
@@ -221,7 +202,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             had_failure = False
             while True:
                 try:
-                    first_result = self._get_embeddings_with_retry(first_batch)
+                    first_result = self._get_embeddings_with_retry(
+                        first_batch, embeddings_type
+                    )
                     break
                 except InvalidArgument:
                     had_failure = True
@@ -255,8 +238,19 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         # and text batches for the rest of texts.
         return first_result, batches
 
-    def embed_documents(
-        self, texts: List[str], batch_size: int = 0
+    def embed(
+        self,
+        texts: List[str],
+        batch_size: int = 0,
+        embeddings_task_type: Optional[
+            Literal[
+                "RETRIEVAL_QUERY",
+                "RETRIEVAL_DOCUMENT",
+                "SEMANTIC_SIMILARITY",
+                "CLASSIFICATION",
+                "CLUSTERING",
+            ]
+        ] = None,
     ) -> List[List[float]]:
         """Embed a list of strings.
 
@@ -265,6 +259,12 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             batch_size: [int] The batch size of embeddings to send to the model.
                 If zero, then the largest batch size will be detected dynamically
                 at the first request, starting from 250, down to 5.
+            embeddings_task_type: [str] optional embeddings task type, one of the following
+                            RETRIEVAL_QUERY	- Text is a query in a search/retrieval setting.
+                            RETRIEVAL_DOCUMENT - Text is a document in a search/retrieval setting.
+                            SEMANTIC_SIMILARITY - Embeddings will be used for Semantic Textual Similarity (STS).
+                            CLASSIFICATION - Embeddings will be used for classification.
+                            CLUSTERING - Embeddings will be used for clustering.
 
         Returns:
             List of embeddings, one for each text.
@@ -278,7 +278,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
             batches = VertexAIEmbeddings._prepare_batches(texts, batch_size)
         else:
             # Dynamic batch size, starting from 250 at the first call.
-            first_batch_result, batches = self._prepare_and_validate_batches(texts)
+            first_batch_result, batches = self._prepare_and_validate_batches(
+                texts, embeddings_task_type
+            )
         # First batch result may have some embeddings already.
         # In such case, batches have texts that were not processed yet.
         embeddings.extend(first_batch_result)
@@ -286,7 +288,9 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         for batch in batches:
             tasks.append(
                 self.instance["task_executor"].submit(
-                    self._get_embeddings_with_retry, texts=batch
+                    self._get_embeddings_with_retry,
+                    texts=batch,
+                    embeddings_type=embeddings_task_type,
                 )
             )
         if len(tasks) > 0:
@@ -294,6 +298,22 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         for t in tasks:
             embeddings.extend(t.result())
         return embeddings
+
+    def embed_documents(
+        self, texts: List[str], batch_size: int = 0
+    ) -> List[List[float]]:
+        """Embed a list of documents.
+
+        Args:
+            texts: List[str] The list of texts to embed.
+            batch_size: [int] The batch size of embeddings to send to the model.
+                If zero, then the largest batch size will be detected dynamically
+                at the first request, starting from 250, down to 5.
+
+        Returns:
+            List of embeddings, one for each text.
+        """
+        return self.embed(texts, batch_size, "RETRIEVAL_DOCUMENT")
 
     def embed_query(self, text: str) -> List[float]:
         """Embed a text.
@@ -304,5 +324,5 @@ class VertexAIEmbeddings(_VertexAICommon, Embeddings):
         Returns:
             Embedding for the text.
         """
-        embeddings = self.embed_documents([text], 1)
+        embeddings = self.embed([text], 1, "RETRIEVAL_QUERY")
         return embeddings[0]
