@@ -184,6 +184,14 @@ class BigQueryVectorStore(VectorStore):
     def embeddings(self) -> Optional[Embeddings]:
         return self._embedding_function
 
+    @property
+    def vector_table_name(self) -> str:
+        return self.vector_full_table_id.split(".")[-1]
+
+    @property
+    def vector_full_table_id(self) -> str:
+        return self.full_table_id
+
     def add_texts(
         self,
         texts: List[str],
