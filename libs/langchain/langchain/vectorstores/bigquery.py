@@ -7,7 +7,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, Literal, List, Optional, Tuple, Type
 
 import numpy as np
 
@@ -46,6 +46,7 @@ class BigQueryVectorStore(VectorStore):
         table_name: str = DEFAULT_TABLE_NAME,
         embedding: Optional[Embeddings] = None,
         credentials: Optional[Any] = None,
+        distance_type: Literal["COSINE", "EUCLIDEAN"] = "COSINE"
     ):
         """Constructor for BigQueryVectorStore
 
@@ -65,6 +66,8 @@ class BigQueryVectorStore(VectorStore):
             credentials (Credentials, optional):
                             Custom Google Cloud credentials to use.
                             Defaults to None.
+            distance_type: vector distance function to use,
+                           "COSINE" or "EUCLIDEAN". Default is "COSINE".
         """
         try:
             from google.cloud import bigquery
@@ -77,6 +80,7 @@ class BigQueryVectorStore(VectorStore):
                 "Please, install or upgrade the google-cloud-bigquery library: "
                 "pip install google-cloud-bigquery"
             )
+        self.distance_type = distance_type
         self._embedding_function = embedding
         if not self._embedding_function:
             # Figure out region for Vertex AI from BigQuery location.
@@ -116,8 +120,8 @@ class BigQueryVectorStore(VectorStore):
 
         dataset = self.bq_client.create_dataset(dataset_name, exists_ok=True)
         # If dataset already exists in a different region, we cannot proceed.
-        if not dataset.location.lower().startswith(  # type: ignore
-            self.bq_client.location.lower()
+        if not dataset.location.lower().startswith( # type: ignore
+            self.bq_client.location.lower() # type: ignore
         ):  # type: ignore
             raise ValueError(
                 "Existing dataset "
@@ -339,7 +343,8 @@ class BigQueryVectorStore(VectorStore):
                 {_METADATA_COL_NAME},
                 {_CONTENT_COL_NAME},
                 {_TEXT_EMBEDDING_COL_NAME},
-            ML.DISTANCE(@v, {_TEXT_EMBEDDING_COL_NAME}, 'COSINE') as distance
+            ML.DISTANCE(@v, {_TEXT_EMBEDDING_COL_NAME},
+                            '{self.distance_type}') as distance
             FROM `{self.full_table_id}`
             WHERE {_TEXT_EMBEDDING_COL_NAME} IS NOT NULL
                   AND ARRAY_LENGTH({_TEXT_EMBEDDING_COL_NAME}) != 0
@@ -457,7 +462,11 @@ class BigQueryVectorStore(VectorStore):
         return [i[0] for i in tuples]
 
     def _select_relevance_score_fn(self) -> Callable[[float], float]:
-        return BigQueryVectorStore._cosine_relevance_score_fn
+        if self.distance_type == "COSINE":
+            return BigQueryVectorStore._cosine_relevance_score_fn
+        else:
+            raise ValueError("Relevance score is not supported "
+                             f"for `{self.distance_type}` distance.")
 
     def max_marginal_relevance_search(
         self,
