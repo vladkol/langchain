@@ -245,7 +245,7 @@ class BigQueryVectorStore(VectorStore):
                     bigquery.ArrayQueryParameter("ids", "STRING", ids),
                 ]
             )
-            id_expr = "{_ID_COL_NAME} IN UNNEST(@ids)"
+            id_expr = f"{_ID_COL_NAME} IN UNNEST(@ids)"
         else:
             job_config = None
             id_expr = "TRUE"
