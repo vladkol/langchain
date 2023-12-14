@@ -335,7 +335,9 @@ class BigQueryVectorStore(VectorStore):
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ArrayQueryParameter("v", "FLOAT64", embedding),
-            ]
+            ],
+            use_query_cache=False,
+            priority=bigquery.QueryPriority.BATCH
         )
         query = f"""
             SELECT
