@@ -353,7 +353,9 @@ class BigQueryVectorStore(VectorStore):
             LIMIT {k}
                 """
         document_tuples: List[Tuple[Document, List[float], float]] = []
-        job = self.bq_client.query(query, job_config=job_config)
+        job = self.bq_client.query(query,
+                                   job_config=job_config,
+                                   api_method=bigquery.enums.QueryApiMethod.QUERY)
         for row in job:
             metadata = row[_METADATA_COL_NAME]
             if metadata:
